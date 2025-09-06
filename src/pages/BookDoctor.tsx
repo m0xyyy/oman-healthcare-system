@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth } from '../firebase/firebase';
-import { doc, getDoc, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -43,36 +43,53 @@ const BookDoctor: React.FC = () => {
   }, [doctorId, navigate]);
 
   const handleBooking = async () => {
-    if (!selectedDay || !selectedTime || !doctor || !userId) return alert('Select a day and time.');
-    const date = getNextDateForDay(selectedDay);
-    const doctorUserId = doctor.userId || doctor.id || '';
+    try {
+      if (!selectedDay || !selectedTime || !doctor || !userId) {
+        alert('Select a day and time.');
+        return;
+      }
 
-    // Conflict check
-    const q = query(collection(db, 'appointments'),
-      where('doctorUserId','==', doctorUserId),
-      where('date','==', date),
-      where('time','==', selectedTime)
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) return alert('This slot is already booked.');
+      const date = getNextDateForDay(selectedDay);
+      const doctorUserId = doctor.userId || doctor.id || '';
 
-    // Get patient name (optional)
-    let patientName = '';
-    const uDoc = await getDoc(doc(db, 'users', userId));
-    if (uDoc.exists()) patientName = (uDoc.data() as any).name || '';
+      // Deterministic appointment ID: prevents double booking without any reads
+      const apptId = `${doctorUserId}_${date}_${selectedTime}`;
 
-    await addDoc(collection(db, 'appointments'), {
-      patientUserId: userId, patientName,
-      doctorUserId, doctorName: doctor.name || '',
-      specialty: doctor.specialty || '', city: doctor.city || '',
-      clinicName: doctor.clinicName || '', language: doctor.language || '',
-      day: selectedDay, date, time: selectedTime,
-      reason: reason || '',
-      type: 'inperson', status: 'pending', createdAt: new Date().toISOString()
-    });
+      // Optional: get patient name
+      let patientName = '';
+      const uDoc = await getDoc(doc(db, 'users', userId));
+      if (uDoc.exists()) patientName = (uDoc.data() as any).name || '';
 
-    alert('Appointment request sent.');
-    navigate('/dashboard');
+      // Write appointment (rules will reject if the ID already exists)
+      await setDoc(
+        doc(db, 'appointments', apptId),
+        {
+          patientUserId: userId,
+          patientName,
+          doctorUserId,
+          doctorName: doctor.name || '',
+          specialty: doctor.specialty || '',
+          city: doctor.city || '',
+          clinicName: doctor.clinicName || '',
+          language: doctor.language || '',
+          day: selectedDay,
+          date,
+          time: selectedTime,
+          reason: reason || '',
+          type: 'inperson',
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          patientUnread: true,
+        },
+        { merge: false }
+      );
+
+      alert('Appointment request sent.');
+      navigate('/dashboard');
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || 'Booking failed.');
+    }
   };
 
   if (!doctor) return <div className="app-container"><p>Loading doctor...</p></div>;
@@ -80,6 +97,7 @@ const BookDoctor: React.FC = () => {
   return (
     <div className="app-container">
       <h2>Book Appointment</h2>
+
       <div className="card">
         <div className="card-title">{doctor.name}</div>
         <div className="small-muted">Specialty: {doctor.specialty}</div>
@@ -89,32 +107,54 @@ const BookDoctor: React.FC = () => {
       </div>
 
       <div className="card">
-        <div className="form-row"><div className="small-muted">Select Day:</div>
+        <div className="form-row">
+          <div className="small-muted">Select Day:</div>
           <div className="row">
             {DAYS.map(d => (
-              <button key={d} className={`btn ${selectedDay===d ? 'btn-primary':''}`} onClick={() => setSelectedDay(d)}>{d}</button>
+              <button
+                key={d}
+                className={`btn ${selectedDay===d ? 'btn-primary':''}`}
+                onClick={() => setSelectedDay(d)}
+              >
+                {d}
+              </button>
             ))}
           </div>
         </div>
 
-        <div className="form-row"><div className="small-muted">Select Time:</div>
+        <div className="form-row">
+          <div className="small-muted">Select Time:</div>
           <div className="row">
             {TIMES.map(t => (
-              <button key={t} className={`btn ${selectedTime===t ? 'btn-primary':''}`} onClick={() => setSelectedTime(t)}>{t}</button>
+              <button
+                key={t}
+                className={`btn ${selectedTime===t ? 'btn-primary':''}`}
+                onClick={() => setSelectedTime(t)}
+              >
+                {t}
+              </button>
             ))}
           </div>
         </div>
 
         <div className="form-row">
           <label className="small-muted">Reason for Visit:</label>
-          <textarea className="textarea" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Briefly describe your reason" />
+          <textarea
+            className="textarea"
+            value={reason}
+            onChange={e=>setReason(e.target.value)}
+            placeholder="Briefly describe your reason"
+          />
         </div>
 
         <div className="card-actions">
-          <button className="btn btn-primary" onClick={handleBooking}>Confirm Appointment</button>
+          <button className="btn btn-primary" onClick={handleBooking}>
+            Confirm Appointment
+          </button>
         </div>
       </div>
     </div>
   );
 };
+
 export default BookDoctor;
