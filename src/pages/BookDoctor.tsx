@@ -2,10 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth } from '../firebase/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
-const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const DAYS  = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const TIMES = ['10:00 AM','12:00 PM','2:00 PM','4:00 PM'];
 
 const BookDoctor: React.FC = () => {
@@ -18,6 +18,7 @@ const BookDoctor: React.FC = () => {
   const [userId, setUserId] = useState('');
   const [reason, setReason] = useState('');
 
+  // Next date for a weekday name (e.g., "Tuesday")
   const getNextDateForDay = (dayName: string) => {
     const map: Record<string, number> = { Sunday:0, Monday:1, Tuesday:2, Wednesday:3, Thursday:4, Friday:5, Saturday:6 };
     const today = new Date();
@@ -26,73 +27,75 @@ const BookDoctor: React.FC = () => {
     if (diff <= 0) diff += 7;
     const result = new Date(today);
     result.setDate(today.getDate() + diff);
-    return result.toISOString().slice(0,10);
+    return result.toISOString().slice(0,10); // YYYY-MM-DD
   };
 
   useEffect(() => {
     if (!doctorId) return;
+
     const unsub = onAuthStateChanged(auth, u => u && setUserId(u.uid));
 
     (async () => {
       const snap = await getDoc(doc(db, 'doctors', doctorId));
-      if (snap.exists()) setDoctor({ id: snap.id, ...(snap.data() as any) });
-      else { alert('Doctor not found'); navigate('/dashboard'); }
+      if (snap.exists()) {
+        setDoctor({ id: snap.id, ...(snap.data() as any) });
+      } else {
+        alert('Doctor not found.');
+        navigate('/dashboard');
+      }
     })();
 
     return () => unsub();
   }, [doctorId, navigate]);
 
   const handleBooking = async () => {
+    if (!selectedDay || !selectedTime || !doctor || !userId) {
+      alert('Select a day and time.');
+      return;
+    }
+
+    const date = getNextDateForDay(selectedDay);
+    const doctorUserId = doctor.userId || doctor.id || '';
+
     try {
-      if (!selectedDay || !selectedTime || !doctor || !userId) {
-        alert('Select a day and time.');
-        return;
-      }
-
-      const date = getNextDateForDay(selectedDay);
-      const doctorUserId = doctor.userId || doctor.id || '';
-
-      // Deterministic appointment ID: prevents double booking without any reads
-      const apptId = `${doctorUserId}_${date}_${selectedTime}`;
-
-      // Optional: get patient name
-      let patientName = '';
-      const uDoc = await getDoc(doc(db, 'users', userId));
-      if (uDoc.exists()) patientName = (uDoc.data() as any).name || '';
-
-      // Write appointment (rules will reject if the ID already exists)
-      await setDoc(
-        doc(db, 'appointments', apptId),
-        {
-          patientUserId: userId,
-          patientName,
-          doctorUserId,
-          doctorName: doctor.name || '',
-          specialty: doctor.specialty || '',
-          city: doctor.city || '',
-          clinicName: doctor.clinicName || '',
-          language: doctor.language || '',
-          day: selectedDay,
-          date,
-          time: selectedTime,
-          reason: reason || '',
-          type: 'inperson',
-          status: 'pending',
-          createdAt: new Date().toISOString(),
-          patientUnread: true,
-        },
-        { merge: false }
-      );
+      // (No read-side conflict check; rules enforce uniqueness.)
+      await addDoc(collection(db, 'appointments'), {
+        patientUserId: userId,
+        patientName: '',              // optional; you can fetch user profile if you want
+        doctorUserId,
+        doctorName: doctor.name || '',
+        specialty: doctor.specialty || '',
+        city: doctor.city || '',
+        clinicName: doctor.clinicName || '',
+        language: doctor.language || '',
+        day: selectedDay,
+        date,
+        time: selectedTime,
+        reason: reason || '',
+        type: 'inperson',
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      });
 
       alert('Appointment request sent.');
       navigate('/dashboard');
     } catch (e: any) {
-      console.error(e);
-      alert(e?.message || 'Booking failed.');
+      // If rules block a duplicate slot, Firestore returns "permission-denied".
+      if (e?.code === 'permission-denied') {
+        alert('This slot is already booked. Please choose another time.');
+      } else {
+        alert(e?.message || 'Something went wrong. Please try again.');
+      }
     }
   };
 
-  if (!doctor) return <div className="app-container"><p>Loading doctor...</p></div>;
+  if (!doctor) {
+    return (
+      <div className="app-container">
+        <p>Loading doctor...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
@@ -113,7 +116,7 @@ const BookDoctor: React.FC = () => {
             {DAYS.map(d => (
               <button
                 key={d}
-                className={`btn ${selectedDay===d ? 'btn-primary':''}`}
+                className={`btn ${selectedDay === d ? 'btn-primary' : ''}`}
                 onClick={() => setSelectedDay(d)}
               >
                 {d}
@@ -128,7 +131,7 @@ const BookDoctor: React.FC = () => {
             {TIMES.map(t => (
               <button
                 key={t}
-                className={`btn ${selectedTime===t ? 'btn-primary':''}`}
+                className={`btn ${selectedTime === t ? 'btn-primary' : ''}`}
                 onClick={() => setSelectedTime(t)}
               >
                 {t}
@@ -142,7 +145,7 @@ const BookDoctor: React.FC = () => {
           <textarea
             className="textarea"
             value={reason}
-            onChange={e=>setReason(e.target.value)}
+            onChange={e => setReason(e.target.value)}
             placeholder="Briefly describe your reason"
           />
         </div>
