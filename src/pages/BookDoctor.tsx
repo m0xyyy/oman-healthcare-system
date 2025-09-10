@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth } from '../firebase/firebase';
-import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const DAYS  = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -18,7 +18,6 @@ const BookDoctor: React.FC = () => {
   const [userId, setUserId] = useState('');
   const [reason, setReason] = useState('');
 
-  // Next date for a weekday name (e.g., "Tuesday")
   const getNextDateForDay = (dayName: string) => {
     const map: Record<string, number> = { Sunday:0, Monday:1, Tuesday:2, Wednesday:3, Thursday:4, Friday:5, Saturday:6 };
     const today = new Date();
@@ -27,7 +26,7 @@ const BookDoctor: React.FC = () => {
     if (diff <= 0) diff += 7;
     const result = new Date(today);
     result.setDate(today.getDate() + diff);
-    return result.toISOString().slice(0,10); // YYYY-MM-DD
+    return result.toISOString().slice(0,10);
   };
 
   useEffect(() => {
@@ -56,12 +55,13 @@ const BookDoctor: React.FC = () => {
 
     const date = getNextDateForDay(selectedDay);
     const doctorUserId = doctor.userId || doctor.id || '';
+    // deterministic doc id that matches the security rule
+    const apptId = `${doctorUserId}_${date}_${selectedTime}`;
 
     try {
-      // (No read-side conflict check; rules enforce uniqueness.)
-      await addDoc(collection(db, 'appointments'), {
+      await setDoc(doc(db, 'appointments', apptId), {
         patientUserId: userId,
-        patientName: '',              // optional; you can fetch user profile if you want
+        patientName: '',
         doctorUserId,
         doctorName: doctor.name || '',
         specialty: doctor.specialty || '',
@@ -80,7 +80,7 @@ const BookDoctor: React.FC = () => {
       alert('Appointment request sent.');
       navigate('/dashboard');
     } catch (e: any) {
-      // If rules block a duplicate slot, Firestore returns "permission-denied".
+      // if the doc already exists, rules will treat this as update/denied
       if (e?.code === 'permission-denied') {
         alert('This slot is already booked. Please choose another time.');
       } else {
