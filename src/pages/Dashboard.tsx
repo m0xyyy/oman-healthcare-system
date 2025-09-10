@@ -8,7 +8,8 @@ import {
   getDocs,
   doc,
   updateDoc,
-  getDoc
+  getDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
@@ -29,7 +30,6 @@ const Dashboard: React.FC = () => {
       const userId = auth.currentUser.uid;
 
       try {
-        // fetch user profile
         const userDocSnap = await getDoc(doc(db, 'users', userId));
         if (userDocSnap.exists()) {
           const u = userDocSnap.data() as any;
@@ -37,19 +37,17 @@ const Dashboard: React.FC = () => {
           setName(u.name || auth.currentUser?.email || '');
         }
 
-        // fetch appointments based on role
-        let q;
+        let qRef;
         const userRole = userDocSnap.exists() ? (userDocSnap.data() as any).role : '';
         if (userRole === 'patient') {
-          q = query(collection(db, 'appointments'), where('patientUserId', '==', userId));
+          qRef = query(collection(db, 'appointments'), where('patientUserId', '==', userId));
         } else if (userRole === 'doctor') {
-          q = query(collection(db, 'appointments'), where('doctorUserId', '==', userId));
+          qRef = query(collection(db, 'appointments'), where('doctorUserId', '==', userId));
         }
 
-        if (q) {
-          const apptSnap = await getDocs(q);
+        if (qRef) {
+          const apptSnap = await getDocs(qRef);
           const appts = apptSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-          // populate patient names (client-side) for any appointment missing patientName
           const apptsWithNames = await hydratePatientNames(appts);
           setAppointments(apptsWithNames);
         } else {
@@ -62,18 +60,13 @@ const Dashboard: React.FC = () => {
       }
     };
 
-    // helper: for appointments missing patientName, fetch users once and map
     const hydratePatientNames = async (appts: any[]) => {
       try {
         const missingIds = Array.from(new Set(
-          appts
-            .filter(a => !a.patientName && a.patientUserId)
-            .map(a => a.patientUserId)
+          appts.filter(a => !a.patientName && a.patientUserId).map(a => a.patientUserId)
         ));
-
         if (missingIds.length === 0) return appts;
 
-        // fetch user docs in parallel
         const userDocs = await Promise.all(
           missingIds.map(uid => getDoc(doc(db, 'users', uid)))
         );
@@ -84,11 +77,10 @@ const Dashboard: React.FC = () => {
             const data = uSnap.data() as any;
             idToName[missingIds[idx]] = data.name || data.email || missingIds[idx];
           } else {
-            idToName[missingIds[idx]] = missingIds[idx]; // fallback to id
+            idToName[missingIds[idx]] = missingIds[idx];
           }
         });
 
-        // return new array with patientName filled in (client-side only)
         return appts.map(a => ({
           ...a,
           patientName: a.patientName || (a.patientUserId ? idToName[a.patientUserId] : a.patientName)
@@ -103,7 +95,6 @@ const Dashboard: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // helper to sort by createdAt desc (newest first). fallback uses date/time string
   const sortNewestFirst = (list: any[]) => {
     return list.slice().sort((a, b) => {
       const aKey = a.createdAt || (a.date ? (a.date + ' ' + (a.time || '')) : '');
@@ -124,9 +115,18 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const deleteCanceled = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'appointments', id));
+      setAppointments(prev => prev.filter(a => a.id !== id));
+    } catch (err) {
+      console.error('Failed to delete appointment', err);
+      alert('Failed to remove this record.');
+    }
+  };
+
   if (loading) return <p style={{ padding: 20 }}>Loading dashboard...</p>;
 
-  // split upcoming vs history
   const upcoming = sortNewestFirst(appointments.filter(a => a.status === 'pending' || a.status === 'confirmed'));
   const history = sortNewestFirst(appointments.filter(a => a.status === 'canceled' || a.status === 'completed'));
 
@@ -135,7 +135,6 @@ const Dashboard: React.FC = () => {
       <h2>Dashboard</h2>
       <p>Welcome, {name}!</p>
 
-      {/* Patient-only Find Doctors button */}
       {role === 'patient' && (
         <div style={{ marginTop: 8, marginBottom: 16 }}>
           <button className="btn btn-primary" onClick={() => navigate('/dashboard/find-doctors')}>
@@ -144,7 +143,6 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Patient view */}
       {role === 'patient' && (
         <section>
           <h3>Your Appointments</h3>
@@ -157,8 +155,6 @@ const Dashboard: React.FC = () => {
                 <div><strong>Date:</strong> {appt.date || appt.day || '—'} | <strong>Time:</strong> {appt.time || '—'}</div>
                 <div><strong>Status:</strong> {appt.status}</div>
                 {appt.reason && <div><strong>Reason:</strong> {appt.reason}</div>}
-
-                {/* Patient cancel before confirmation */}
                 {appt.status === 'pending' && (
                   <div style={{ marginTop: 8 }}>
                     <button
@@ -186,13 +182,25 @@ const Dashboard: React.FC = () => {
                 <div><strong>Date:</strong> {appt.date || appt.day || '—'} | <strong>Time:</strong> {appt.time || '—'}</div>
                 <div><strong>Status:</strong> {appt.status}</div>
                 {appt.reason && <div><strong>Reason:</strong> {appt.reason}</div>}
+                {appt.status === 'canceled' && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        if (!window.confirm('Remove this canceled record from history?')) return;
+                        deleteCanceled(appt.id);
+                      }}
+                    >
+                      Remove from History
+                    </button>
+                  </div>
+                )}
               </div>
             ))
           )}
         </section>
       )}
 
-      {/* Doctor view */}
       {role === 'doctor' && (
         <section style={{ marginTop: 12 }}>
           <h3>Upcoming Appointments</h3>
@@ -207,7 +215,6 @@ const Dashboard: React.FC = () => {
                   <div><strong>Status:</strong> {appt.status}</div>
                   <div><strong>Patient:</strong> {appt.patientName || appt.patientUserId || '—'}</div>
                   {appt.reason && <div><em>Reason:</em> {appt.reason}</div>}
-
                   {appt.status === 'pending' && (
                     <div style={{ marginTop: 8 }}>
                       <button className="btn btn-primary" onClick={() => updateStatus(appt.id, 'confirmed')} style={{ marginRight: 8 }}>
