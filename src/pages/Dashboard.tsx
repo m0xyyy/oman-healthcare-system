@@ -1,134 +1,109 @@
 // src/pages/Dashboard.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase/firebase';
 import {
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  updateDoc,
-  getDoc,
-  deleteDoc
+  collection, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc,
 } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+
+type Appt = {
+  id: string;
+  patientUserId: string;
+  patientName?: string;
+  doctorUserId: string;
+  doctorName?: string;
+  specialty?: string;
+  city?: string;
+  language?: string;
+  clinicName?: string;
+  day?: string;
+  date?: string;
+  time?: string;
+  reason?: string;
+  status: 'pending' | 'confirmed' | 'canceled' | 'completed';
+  createdAt?: string;
+};
 
 const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
-  const [role, setRole] = useState<string>('');
-  const [appointments, setAppointments] = useState<any[]>([]);
-  const [name, setName] = useState<string>('');
+  const nav = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<'patient' | 'doctor' | ''>('');
+  const [name, setName] = useState('');
+  const [appointments, setAppointments] = useState<Appt[]>([]);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const run = async () => {
+      if (!auth.currentUser) return nav('/login');
       setLoading(true);
-      if (!auth.currentUser) {
-        navigate('/login');
-        return;
+      const uid = auth.currentUser.uid;
+
+      const u = await getDoc(doc(db, 'users', uid));
+      const r = (u.exists() ? (u.data() as any).role : '') as 'patient' | 'doctor' | '';
+      setRole(r);
+      setName((u.exists() && ((u.data() as any).name || auth.currentUser.email)) || '');
+
+      let q;
+      if (r === 'patient') q = query(collection(db, 'appointments'), where('patientUserId', '==', uid));
+      if (r === 'doctor')  q = query(collection(db, 'appointments'), where('doctorUserId',  '==', uid));
+
+      if (q) {
+        const snap = await getDocs(q);
+        const list: Appt[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        setAppointments(await hydratePatientNames(list));
+      } else {
+        setAppointments([]);
       }
-      const userId = auth.currentUser.uid;
-
-      try {
-        const userDocSnap = await getDoc(doc(db, 'users', userId));
-        if (userDocSnap.exists()) {
-          const u = userDocSnap.data() as any;
-          setRole(u.role || '');
-          setName(u.name || auth.currentUser?.email || '');
-        }
-
-        let qRef;
-        const userRole = userDocSnap.exists() ? (userDocSnap.data() as any).role : '';
-        if (userRole === 'patient') {
-          qRef = query(collection(db, 'appointments'), where('patientUserId', '==', userId));
-        } else if (userRole === 'doctor') {
-          qRef = query(collection(db, 'appointments'), where('doctorUserId', '==', userId));
-        }
-
-        if (qRef) {
-          const apptSnap = await getDocs(qRef);
-          const appts = apptSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-          const apptsWithNames = await hydratePatientNames(appts);
-          setAppointments(apptsWithNames);
-        } else {
-          setAppointments([]);
-        }
-      } catch (err) {
-        console.error('Dashboard fetch error', err);
-      } finally {
-        setLoading(false);
-      }
+      setLoading(false);
     };
 
-    const hydratePatientNames = async (appts: any[]) => {
-      try {
-        const missingIds = Array.from(new Set(
-          appts.filter(a => !a.patientName && a.patientUserId).map(a => a.patientUserId)
-        ));
-        if (missingIds.length === 0) return appts;
-
-        const userDocs = await Promise.all(
-          missingIds.map(uid => getDoc(doc(db, 'users', uid)))
-        );
-
-        const idToName: Record<string, string> = {};
-        userDocs.forEach((uSnap, idx) => {
-          if (uSnap.exists()) {
-            const data = uSnap.data() as any;
-            idToName[missingIds[idx]] = data.name || data.email || missingIds[idx];
-          } else {
-            idToName[missingIds[idx]] = missingIds[idx];
-          }
-        });
-
-        return appts.map(a => ({
-          ...a,
-          patientName: a.patientName || (a.patientUserId ? idToName[a.patientUserId] : a.patientName)
-        }));
-      } catch (err) {
-        console.error('Failed to hydrate patient names', err);
-        return appts;
-      }
+    const hydratePatientNames = async (list: Appt[]) => {
+      const missing = Array.from(new Set(list.filter(a => !a.patientName && a.patientUserId).map(a => a.patientUserId)));
+      if (!missing.length) return list;
+      const lookups = await Promise.all(missing.map(id => getDoc(doc(db, 'users', id))));
+      const map: Record<string, string> = {};
+      lookups.forEach((s, i) => {
+        map[missing[i]] = s.exists() ? ((s.data() as any).name || (s.data() as any).email || missing[i]) : missing[i];
+      });
+      return list.map(a => ({ ...a, patientName: a.patientName || map[a.patientUserId] || a.patientName }));
     };
 
-    fetchData();
+    run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sortNewestFirst = (list: any[]) => {
-    return list.slice().sort((a, b) => {
-      const aKey = a.createdAt || (a.date ? (a.date + ' ' + (a.time || '')) : '');
-      const bKey = b.createdAt || (b.date ? (b.date + ' ' + (b.time || '')) : '');
-      if (aKey > bKey) return -1;
-      if (aKey < bKey) return 1;
-      return 0;
-    });
+  const sortNewestFirst = (xs: Appt[]) => {
+    const key = (a: Appt) => a.createdAt || `${a.date || ''} ${a.time || ''}`;
+    return xs.slice().sort((a, b) => (key(a) > key(b) ? -1 : key(a) < key(b) ? 1 : 0));
   };
 
-  const updateStatus = async (id: string, newStatus: string) => {
+  const upcoming = useMemo(
+    () => sortNewestFirst(appointments.filter(a => a.status === 'pending' || a.status === 'confirmed')),
+    [appointments]
+  );
+  const history = useMemo(
+    () => sortNewestFirst(appointments.filter(a => a.status === 'canceled' || a.status === 'completed')),
+    [appointments]
+  );
+
+  const updateStatus = async (id: string, status: Appt['status']) => {
     try {
-      await updateDoc(doc(db, 'appointments', id), { status: newStatus });
-      setAppointments(prev => prev.map(a => (a.id === id ? { ...a, status: newStatus } : a)));
-    } catch (err) {
-      console.error('Failed to update status', err);
+      await updateDoc(doc(db, 'appointments', id), { status });
+      setAppointments(prev => prev.map(a => (a.id === id ? { ...a, status } : a)));
+    } catch {
       alert('Failed to update appointment status.');
     }
   };
 
-  const deleteCanceled = async (id: string) => {
+  const removeFromHistory = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'appointments', id));
       setAppointments(prev => prev.filter(a => a.id !== id));
-    } catch (err) {
-      console.error('Failed to delete appointment', err);
-      alert('Failed to remove this record.');
+    } catch {
+      alert('Failed to remove appointment.');
     }
   };
 
   if (loading) return <p style={{ padding: 20 }}>Loading dashboard...</p>;
-
-  const upcoming = sortNewestFirst(appointments.filter(a => a.status === 'pending' || a.status === 'confirmed'));
-  const history = sortNewestFirst(appointments.filter(a => a.status === 'canceled' || a.status === 'completed'));
 
   return (
     <div className="app-container" style={{ padding: '2rem 1rem' }}>
@@ -136,10 +111,8 @@ const Dashboard: React.FC = () => {
       <p>Welcome, {name}!</p>
 
       {role === 'patient' && (
-        <div style={{ marginTop: 8, marginBottom: 16 }}>
-          <button className="btn btn-primary" onClick={() => navigate('/dashboard/find-doctors')}>
-            Find Doctors
-          </button>
+        <div style={{ margin: '8px 0 16px' }}>
+          <button className="btn btn-primary" onClick={() => nav('/dashboard/find-doctors')}>Find Doctors</button>
         </div>
       )}
 
@@ -149,19 +122,20 @@ const Dashboard: React.FC = () => {
           {upcoming.length === 0 ? (
             <p>No upcoming appointments.</p>
           ) : (
-            upcoming.map((appt) => (
-              <div key={appt.id} className="card" style={{ marginBottom: 12 }}>
-                <div><strong>Doctor:</strong> {appt.doctorName || '—'} {appt.clinicName ? `— ${appt.clinicName}` : ''}</div>
-                <div><strong>Date:</strong> {appt.date || appt.day || '—'} | <strong>Time:</strong> {appt.time || '—'}</div>
-                <div><strong>Status:</strong> {appt.status}</div>
-                {appt.reason && <div><strong>Reason:</strong> {appt.reason}</div>}
-                {appt.status === 'pending' && (
+            upcoming.map(a => (
+              <div key={a.id} className="card" style={{ marginBottom: 12 }}>
+                <div><strong>Doctor:</strong> {a.doctorName || '—'} {a.clinicName ? `— ${a.clinicName}` : ''}</div>
+                <div><strong>Date:</strong> {a.date || a.day || '—'} | <strong>Time:</strong> {a.time || '—'}</div>
+                <div><strong>Status:</strong> {a.status}</div>
+                {a.reason && <div><strong>Reason:</strong> {a.reason}</div>}
+
+                {a.status === 'pending' && (
                   <div style={{ marginTop: 8 }}>
                     <button
                       className="btn btn-danger"
                       onClick={() => {
                         if (!window.confirm('Cancel this appointment?')) return;
-                        updateStatus(appt.id, 'canceled');
+                        updateStatus(a.id, 'canceled');
                       }}
                     >
                       Cancel
@@ -176,23 +150,15 @@ const Dashboard: React.FC = () => {
           {history.length === 0 ? (
             <p>No past appointments.</p>
           ) : (
-            history.map((appt) => (
-              <div key={appt.id} className="card" style={{ marginBottom: 12 }}>
-                <div><strong>Doctor:</strong> {appt.doctorName || '—'} {appt.clinicName ? `— ${appt.clinicName}` : ''}</div>
-                <div><strong>Date:</strong> {appt.date || appt.day || '—'} | <strong>Time:</strong> {appt.time || '—'}</div>
-                <div><strong>Status:</strong> {appt.status}</div>
-                {appt.reason && <div><strong>Reason:</strong> {appt.reason}</div>}
-                {appt.status === 'canceled' && (
+            history.map(a => (
+              <div key={a.id} className="card" style={{ marginBottom: 12 }}>
+                <div><strong>Doctor:</strong> {a.doctorName || '—'} {a.clinicName ? `— ${a.clinicName}` : ''}</div>
+                <div><strong>Date:</strong> {a.date || a.day || '—'} | <strong>Time:</strong> {a.time || '—'}</div>
+                <div><strong>Status:</strong> {a.status}</div>
+                {a.reason && <div><strong>Reason:</strong> {a.reason}</div>}
+                {a.status === 'canceled' && (
                   <div style={{ marginTop: 8 }}>
-                    <button
-                      className="btn"
-                      onClick={() => {
-                        if (!window.confirm('Remove this canceled record from history?')) return;
-                        deleteCanceled(appt.id);
-                      }}
-                    >
-                      Remove from History
-                    </button>
+                    <button className="btn" onClick={() => removeFromHistory(a.id)}>Remove from history</button>
                   </div>
                 )}
               </div>
@@ -204,23 +170,22 @@ const Dashboard: React.FC = () => {
       {role === 'doctor' && (
         <section style={{ marginTop: 12 }}>
           <h3>Upcoming Appointments</h3>
-
           {upcoming.length === 0 ? (
             <p>No upcoming appointments.</p>
           ) : (
             <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
-              {upcoming.map((appt) => (
-                <li key={appt.id} className="card" style={{ marginBottom: 12 }}>
-                  <div><strong>Appointment on</strong> {appt.date || appt.day || '—'} at <strong>{appt.time || '—'}</strong></div>
-                  <div><strong>Status:</strong> {appt.status}</div>
-                  <div><strong>Patient:</strong> {appt.patientName || appt.patientUserId || '—'}</div>
-                  {appt.reason && <div><em>Reason:</em> {appt.reason}</div>}
-                  {appt.status === 'pending' && (
+              {upcoming.map(a => (
+                <li key={a.id} className="card" style={{ marginBottom: 12 }}>
+                  <div><strong>Appointment on</strong> {a.date || a.day || '—'} at <strong>{a.time || '—'}</strong></div>
+                  <div><strong>Status:</strong> {a.status}</div>
+                  <div><strong>Patient:</strong> {a.patientName || a.patientUserId || '—'}</div>
+                  {a.reason && <div><em>Reason:</em> {a.reason}</div>}
+                  {a.status === 'pending' && (
                     <div style={{ marginTop: 8 }}>
-                      <button className="btn btn-primary" onClick={() => updateStatus(appt.id, 'confirmed')} style={{ marginRight: 8 }}>
+                      <button className="btn btn-primary" onClick={() => updateStatus(a.id, 'confirmed')} style={{ marginRight: 8 }}>
                         Confirm
                       </button>
-                      <button className="btn btn-danger" onClick={() => updateStatus(appt.id, 'canceled')}>
+                      <button className="btn btn-danger" onClick={() => updateStatus(a.id, 'canceled')}>
                         Cancel
                       </button>
                     </div>
@@ -235,12 +200,12 @@ const Dashboard: React.FC = () => {
             <p>No past appointments.</p>
           ) : (
             <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
-              {history.map((appt) => (
-                <li key={appt.id} className="card" style={{ marginBottom: 12 }}>
-                  <div><strong>Appointment on</strong> {appt.date || appt.day || '—'} at <strong>{appt.time || '—'}</strong></div>
-                  <div><strong>Status:</strong> {appt.status}</div>
-                  <div><strong>Patient:</strong> {appt.patientName || appt.patientUserId || '—'}</div>
-                  {appt.reason && <div><em>Reason:</em> {appt.reason}</div>}
+              {history.map(a => (
+                <li key={a.id} className="card" style={{ marginBottom: 12 }}>
+                  <div><strong>Appointment on</strong> {a.date || a.day || '—'} at <strong>{a.time || '—'}</strong></div>
+                  <div><strong>Status:</strong> {a.status}</div>
+                  <div><strong>Patient:</strong> {a.patientName || a.patientUserId || '—'}</div>
+                  {a.reason && <div><em>Reason:</em> {a.reason}</div>}
                 </li>
               ))}
             </ul>
