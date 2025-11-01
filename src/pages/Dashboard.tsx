@@ -1,4 +1,3 @@
-// src/pages/Dashboard.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase/firebase';
@@ -33,43 +32,41 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const run = async () => {
-      if (!auth.currentUser) return nav('/login');
-      setLoading(true);
-      const uid = auth.currentUser.uid;
+      try {
+        if (!auth.currentUser) {
+          nav('/login');
+          return;
+        }
+        setLoading(true);
+        const uid = auth.currentUser.uid;
 
-      const u = await getDoc(doc(db, 'users', uid));
-      const r = (u.exists() ? (u.data() as any).role : '') as 'patient' | 'doctor' | '';
-      setRole(r);
-      setName((u.exists() && ((u.data() as any).name || auth.currentUser.email)) || '');
+        const u = await getDoc(doc(db, 'users', uid));
+        const r = (u.exists() ? (u.data() as any).role : '') as 'patient' | 'doctor' | '';
+        setRole(r);
+        setName((u.exists() && ((u.data() as any).name || auth.currentUser.email)) || '');
 
-      let q;
-      if (r === 'patient') q = query(collection(db, 'appointments'), where('patientUserId', '==', uid));
-      if (r === 'doctor')  q = query(collection(db, 'appointments'), where('doctorUserId',  '==', uid));
+        let q;
+        if (r === 'patient') q = query(collection(db, 'appointments'), where('patientUserId', '==', uid));
+        if (r === 'doctor')  q = query(collection(db, 'appointments'), where('doctorUserId',  '==', uid));
 
-      if (q) {
-        const snap = await getDocs(q);
-        const list: Appt[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        setAppointments(await hydratePatientNames(list));
-      } else {
+        if (q) {
+          const snap = await getDocs(q);
+          const list: Appt[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+          // IMPORTANT: do NOT try to read other users to hydrate names (rules forbid it).
+          setAppointments(list);
+        } else {
+          setAppointments([]);
+        }
+      } catch (err) {
+        console.error('Failed to load dashboard', err);
         setAppointments([]);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    };
-
-    const hydratePatientNames = async (list: Appt[]) => {
-      const missing = Array.from(new Set(list.filter(a => !a.patientName && a.patientUserId).map(a => a.patientUserId)));
-      if (!missing.length) return list;
-      const lookups = await Promise.all(missing.map(id => getDoc(doc(db, 'users', id))));
-      const map: Record<string, string> = {};
-      lookups.forEach((s, i) => {
-        map[missing[i]] = s.exists() ? ((s.data() as any).name || (s.data() as any).email || missing[i]) : missing[i];
-      });
-      return list.map(a => ({ ...a, patientName: a.patientName || map[a.patientUserId] || a.patientName }));
     };
 
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [nav]);
 
   const sortNewestFirst = (xs: Appt[]) => {
     const key = (a: Appt) => a.createdAt || `${a.date || ''} ${a.time || ''}`;
