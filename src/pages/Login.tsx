@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { auth } from '../firebase/firebase';
 import { useNavigate, Link } from 'react-router-dom';
 
@@ -18,15 +18,24 @@ const Login: React.FC = () => {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      // Optional: force account chooser every time
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
+      navigate('/dashboard');
+    } catch (err: any) {
+      // Common cause: domain not in Authorized domains
+      alert(err?.message || 'Google sign-in failed.');
+    }
+  };
+
   return (
     <div className="auth-page">
       <div className="auth-card card">
         <div className="brand-panel">
           <div className="brand-title">Oman Health</div>
-          <div className="brand-sub">
-            A simple, PDPL-compliant healthcare appointment prototype for Oman.
-            Search doctors, book appointments, and track visit status.
-          </div>
         </div>
 
         <div className="form-panel card">
@@ -61,6 +70,12 @@ const Login: React.FC = () => {
               <Link to="/register" className="btn">Register</Link>
             </div>
           </form>
+
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <button className="btn" onClick={handleGoogleLogin}>
+              Continue with Google
+            </button>
+          </div>
 
           <p style={{ marginTop: 12 }} className="small-muted">
             Don’t have an account? <Link to="/register">Register</Link>
