@@ -106,7 +106,7 @@ const Dashboard: React.FC = () => {
     const doctorConfirmed = appointmentsAsDoctor.filter(a => a.status === 'confirmed').length;
     const doctorCompleted = appointmentsAsDoctor.filter(a => a.status === 'completed').length;
     const doctorCanceled = appointmentsAsDoctor.filter(a => a.status === 'canceled').length;
-    return { 
+    return {
       patient: { pending: patientPending, confirmed: patientConfirmed, completed: patientCompleted, canceled: patientCanceled, totalUpcoming: patientPending + patientConfirmed },
       doctor: { pending: doctorPending, confirmed: doctorConfirmed, completed: doctorCompleted, canceled: doctorCanceled, totalUpcoming: doctorPending + doctorConfirmed }
     };
@@ -190,17 +190,23 @@ const Dashboard: React.FC = () => {
           <div>
             <div className="card-title" style={{ marginBottom: 6 }}>Welcome, {name}</div>
             <div className="small-muted">
-              {roles.includes('patient') && roles.includes('doctor') ? 'Manage your patient and doctor appointments.' 
-              : roles.includes('patient') ? 'Manage appointments, discover doctors, and keep track of your care.' 
-              : 'Review requests, confirm visits, and view your upcoming schedule.'}
+              {roles.includes('patient') && roles.includes('doctor') ? 'Manage your patient and doctor appointments.'
+                : roles.includes('patient') ? 'Manage appointments, discover doctors, and keep track of your care.'
+                : 'Review requests, confirm visits, and view your upcoming schedule.'}
             </div>
           </div>
+
+          {/* >>> Only show the counters for the roles the user actually has <<< */}
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            <div><strong>Upcoming (Patient):</strong> {counts.patient.totalUpcoming}</div>
-            <div className="small-muted">Pending: {counts.patient.pending}</div>
+            {roles.includes('patient') && (
+              <>
+                <div><strong>Upcoming (as patient):</strong> {counts.patient.totalUpcoming}</div>
+                <div className="small-muted">Pending: {counts.patient.pending}</div>
+              </>
+            )}
             {roles.includes('doctor') && (
               <>
-                <div><strong>Upcoming (Doctor):</strong> {counts.doctor.totalUpcoming}</div>
+                <div><strong>Upcoming (as doctor):</strong> {counts.doctor.totalUpcoming}</div>
                 <div className="small-muted">Pending: {counts.doctor.pending}</div>
               </>
             )}
