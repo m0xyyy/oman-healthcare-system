@@ -1,7 +1,23 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../firebase/firebase';
+import { auth, db } from '../firebase/firebase';
 import { useNavigate, Link } from 'react-router-dom';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+async function ensureUserDoc() {
+  const u = auth.currentUser;
+  if (!u) return;
+  const ref = doc(db, 'users', u.uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      name: u.email || 'User',
+      email: u.email || '',
+      roles: ['patient'],
+      createdAt: new Date().toISOString()
+    });
+  }
+}
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -12,6 +28,7 @@ const Login: React.FC = () => {
     e.preventDefault();
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      await ensureUserDoc();
       navigate('/dashboard');
     } catch {
       alert('Login failed. Please check your credentials.');
@@ -21,12 +38,11 @@ const Login: React.FC = () => {
   const handleGoogleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      // Optional: force account chooser every time
       provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
+      await ensureUserDoc();
       navigate('/dashboard');
     } catch (err: any) {
-      // Common cause: domain not in Authorized domains
       alert(err?.message || 'Google sign-in failed.');
     }
   };

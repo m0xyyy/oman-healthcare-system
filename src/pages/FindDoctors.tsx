@@ -1,44 +1,55 @@
-// src/pages/FindDoctors.tsx
 import React, { useEffect, useState } from 'react';
 import { db } from '../firebase/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
-const SPECIALTIES = [
-  'General', 'Pediatrics', 'Cardiology', 'Dermatology',
-  'Orthopedics', 'Ophthalmology'
-];
+const SPECIALTIES = ['Cardiology','Dermatology','ENT','Gastroenterology','General','Neurology','Ophthalmology','Orthopedics','Pediatrics','Pulmonology','Rheumatology'] as const;
+const CITIES = ['Muscat','Salalah','Sohar','Nizwa','Sur','Barka','Ibri','Dhofar'] as const;
+const LANGUAGES = ['English','Arabic','Hindi'] as const;
 
-const CITIES = [
-  'Muscat', 'Salalah', 'Sohar', 'Nizwa', 'Sur', 'Barka', 'Ibri', 'Dhofar'
-];
-
-const LANGUAGES = ['English', 'Arabic', 'Hindi'];
+type DoctorRow = {
+  id: string;
+  userId?: string;
+  name: string;
+  specialty: string;
+  city?: string;
+  language?: string;
+  clinicName?: string;
+};
 
 const FindDoctors: React.FC = () => {
   const navigate = useNavigate();
   const [specialty, setSpecialty] = useState('');
   const [city, setCity] = useState('');
   const [language, setLanguage] = useState('');
-  const [doctors, setDoctors] = useState<any[]>([]);
+  const [doctors, setDoctors] = useState<DoctorRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const fetchDoctors = async () => {
-    let q: any = collection(db, 'doctors');
-    const conditions: any[] = [];
+    setLoading(true);
+    setErr(null);
+    try {
+      let qRef: any = collection(db, 'doctors');
+      const conditions: any[] = [];
+      if (specialty) conditions.push(where('specialty', '==', specialty));
+      if (city) conditions.push(where('city', '==', city));
+      if (language) conditions.push(where('language', '==', language));
+      if (conditions.length) qRef = query(collection(db, 'doctors'), ...conditions);
 
-    if (specialty) conditions.push(where('specialty', '==', specialty));
-    if (city) conditions.push(where('city', '==', city));
-    if (language) conditions.push(where('language', '==', language));
-
-    if (conditions.length > 0) q = query(collection(db, 'doctors'), ...conditions);
-
-    const snap = await getDocs(q);
-    const rows: any[] = [];
-    snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
-    setDoctors(rows);
+      const snap = await getDocs(qRef);
+      const rows: DoctorRow[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      setDoctors(rows);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || 'Failed to load doctors.');
+      setDoctors([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { fetchDoctors(); /* initial load */ }, []);
+  useEffect(() => { fetchDoctors(); }, []); // initial
 
   return (
     <div className="app-container">
@@ -70,17 +81,20 @@ const FindDoctors: React.FC = () => {
         </div>
 
         <div style={{ marginTop: 8 }}>
-          <button className="btn" onClick={fetchDoctors}>Search Doctors</button>
+          <button className="btn" onClick={fetchDoctors} disabled={loading}>
+            {loading ? 'Loading…' : 'Search Doctors'}
+          </button>
         </div>
       </div>
 
       <div style={{ marginTop: 12 }}>
-        {doctors.length === 0 ? (
+        {err && <div className="card" style={{ borderLeft:'4px solid #c0392b', padding:10 }}>{err}</div>}
+        {loading ? <p>Loading…</p> : doctors.length === 0 ? (
           <p>No doctors found.</p>
         ) : (
           doctors.map((doctor) => (
             <div key={doctor.id} className="card">
-              <h3>{doctor.name}</h3>
+              <h3 style={{ marginBottom: 4 }}>{doctor.name}</h3>
               <p className="small-muted"><strong>Specialty:</strong> {doctor.specialty}</p>
               <p className="small-muted"><strong>City:</strong> {doctor.city || 'N/A'}</p>
               <p className="small-muted"><strong>Clinic:</strong> {doctor.clinicName || '—'}</p>

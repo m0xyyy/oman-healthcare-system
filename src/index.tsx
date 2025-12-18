@@ -1,7 +1,7 @@
 // src/index.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './styles/global.css'; // make sure file exists at src/styles/global.css
+import './styles/global.css';
 import './index.css';
 import App from './App';
 
